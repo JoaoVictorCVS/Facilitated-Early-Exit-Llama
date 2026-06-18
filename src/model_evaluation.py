@@ -536,8 +536,7 @@ JSON:
         verbose_mode=True,
         evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
         evaluation_template=CustomGEvalTemplate,
-        # model="gemini-2.0-flash-001"
-        model="gemini-2.5-flash-lite"
+        model="gemini-2.0-flash-001"
     )
 
     all_scores = {
@@ -558,7 +557,18 @@ JSON:
                 LLMTestCase(input=golden.input, actual_output=golden.actual_output, expected_output=golden.expected_output)
             )
 
-        eval_result = evaluate(test_cases=dataset.test_cases, metrics=[coherence_metric, consistency_metric, fluency_metric, relevance_metric])
+        # Retry with backoff on 429 / quota errors
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                eval_result = evaluate(test_cases=dataset.test_cases, metrics=[coherence_metric, consistency_metric, fluency_metric, relevance_metric])
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                wait = 2 ** (attempt + 1) * 10  # 20s, 40s, 80s, 160s, 320s
+                print(f"LLM judge call failed ({e}), retrying in {wait}s...")
+                time.sleep(wait)
         # Returns list of TestResult, each containing a list metrics_data of MetricData, containing score and reason, as well as error.
 
         assert eval_result.test_results[0].metrics_data[0].name == "Coherence [GEval]" and eval_result.test_results[0].metrics_data[1].name == "Consistency [GEval]" and eval_result.test_results[0].metrics_data[2].name == "Fluency [GEval]" and eval_result.test_results[0].metrics_data[3].name == "Relevance [GEval]"
