@@ -841,14 +841,9 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
     _orig_register_buffer = nn.Module.register_buffer
 
     def _register_buffer_overwrite(self, name, tensor, persistent=True):
-        if hasattr(self, name) and name not in self._buffers:
-            # Attribute exists outside _buffers (plain __dict__ entry, etc.)
-            # Remove it so the normal path can proceed.
-            try:
-                object.__delattr__(self, name)
-            except AttributeError:
-                pass
-        if name in self._buffers:
+        if hasattr(self, name):
+            # Bypass the conflict check entirely: write directly to _buffers
+            # regardless of where the stale attribute lives.
             self._buffers[name] = tensor
             return
         _orig_register_buffer(self, name, tensor, persistent)
