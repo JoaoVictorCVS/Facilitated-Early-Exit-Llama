@@ -1040,17 +1040,20 @@ if __name__=="__main__":
             output_string += indention + f"Evaluation duration: { evaluation_duration//60:.0f}:{evaluation_duration%60:.0f} minutes\n"
             output_string += indention + f"Mean output length: {round(torch.tensor(output_lengths, dtype=torch.float).mean().item(), 4)}, total tokens generated: {sum(output_lengths)}\n"
 
-            output_string += indention + f"Std of overall summary score: {round(torch.tensor(summary_scores['overall']).std().item(), 4)}\n"
+            if summary_scores is None:
+                output_string += indention + "Summary scores: unavailable (LLM judge failed)\n\n"
+            else:
+                output_string += indention + f"Std of overall summary score: {round(torch.tensor(summary_scores['overall']).std().item(), 4)}\n"
 
-            # reference_sum_scores = None if is_reference else {'coherence': 0.45555558800697327, 'consistency': 0.7555555701255798, 'fluency': 1.0, 'relevance': 0.4500000476837158, 'overall': 0.6652777194976807}  # fine-tuned model
-            # reference_sum_scores = None if is_reference else {'coherence': 0.5000, 'consistency': 0.7556, 'fluency': 1.0, 'relevance': 0.4944, 'overall': 0.6875}  # fine-tuned model with fine-tuned embedding and lm_head
-            # reference_sum_scores = None if is_reference else {'coherence': 0.5267, 'consistency': 0.7267, 'fluency': 1.0, 'relevance': 0.4956, 'overall': 0.6872}  # fine-tuned model with fine-tuned embedding and lm_head on cnn-dm_validation_short-shuffled52-102.json
-            reference_sum_scores = None if is_reference else {'coherence': 0.47333335876464844, 'consistency': 0.7244445085525513, 'fluency': 0.9900000095367432, 'relevance': 0.47111114859580994, 'overall': 0.664722204208374}  # eellama-3p2-1B-layerskip with exp-decaying thresolds on cnn-dm_validation_short-shuffled52-102.json
-            mean_summary_scores = {key: torch.tensor(val).mean().item() for key, val in summary_scores.items()}
-            sum_scores_indention = "\t\t\t\t\t\t"
-            output_string += indention + sum_scores_indention + "Summary scores:\n"
-            output_string += print_histogram_string(mean_summary_scores, ref_hist=reference_sum_scores, indention=indention+sum_scores_indention)
-            output_string += "\n\n"
+                # reference_sum_scores = None if is_reference else {'coherence': 0.45555558800697327, 'consistency': 0.7555555701255798, 'fluency': 1.0, 'relevance': 0.4500000476837158, 'overall': 0.6652777194976807}  # fine-tuned model
+                # reference_sum_scores = None if is_reference else {'coherence': 0.5000, 'consistency': 0.7556, 'fluency': 1.0, 'relevance': 0.4944, 'overall': 0.6875}  # fine-tuned model with fine-tuned embedding and lm_head
+                # reference_sum_scores = None if is_reference else {'coherence': 0.5267, 'consistency': 0.7267, 'fluency': 1.0, 'relevance': 0.4956, 'overall': 0.6872}  # fine-tuned model with fine-tuned embedding and lm_head on cnn-dm_validation_short-shuffled52-102.json
+                reference_sum_scores = None if is_reference else {'coherence': 0.47333335876464844, 'consistency': 0.7244445085525513, 'fluency': 0.9900000095367432, 'relevance': 0.47111114859580994, 'overall': 0.664722204208374}  # eellama-3p2-1B-layerskip with exp-decaying thresolds on cnn-dm_validation_short-shuffled52-102.json
+                mean_summary_scores = {key: torch.tensor(val).mean().item() for key, val in summary_scores.items()}
+                sum_scores_indention = "\t\t\t\t\t\t"
+                output_string += indention + sum_scores_indention + "Summary scores:\n"
+                output_string += print_histogram_string(mean_summary_scores, ref_hist=reference_sum_scores, indention=indention+sum_scores_indention)
+                output_string += "\n\n"
             output_string += indention + f"Mean exit points per instance: {mean_exit_points}\n"
 
             if is_reference:
