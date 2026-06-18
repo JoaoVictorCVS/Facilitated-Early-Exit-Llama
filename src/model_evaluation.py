@@ -820,10 +820,10 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
 
     import copy
     from thop import profile
+    import torch.nn as nn
 
     model_for_profile = copy.deepcopy(model)
     model_for_profile.eval()
-    clean_thop_buffers(model_for_profile)
 
     dummy_input_ids = torch.randint(
         low=0,
@@ -834,12 +834,35 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
 
     dummy_attention_mask = torch.ones_like(dummy_input_ids)
 
-    with torch.no_grad():
-        macs, params = profile(
-            model_for_profile,
-            inputs=(dummy_input_ids,),
-            verbose=False
-        )
+    # Monkey-patch register_buffer to overwrite stale thop buffers instead of
+    # raising KeyError. thop calls register_buffer("total_ops", ...) on every
+    # module; if the model already carries those buffers from a prior run the
+    # normal path errors. We restore the original after profiling.
+    _orig_register_buffer = nn.Module.register_buffer
+
+    def _register_buffer_overwrite(self, name, tensor, persistent=True):
+        if hasattr(self, name) and name not in self._buffers:
+            # Attribute exists outside _buffers (plain __dict__ entry, etc.)
+            # Remove it so the normal path can proceed.
+            try:
+                object.__delattr__(self, name)
+            except AttributeError:
+                pass
+        if name in self._buffers:
+            self._buffers[name] = tensor
+            return
+        _orig_register_buffer(self, name, tensor, persistent)
+
+    nn.Module.register_buffer = _register_buffer_overwrite
+    try:
+        with torch.no_grad():
+            macs, params = profile(
+                model_for_profile,
+                inputs=(dummy_input_ids,),
+                verbose=False
+            )
+    finally:
+        nn.Module.register_buffer = _orig_register_buffer
 
     del model_for_profile
     torch.cuda.empty_cache()
