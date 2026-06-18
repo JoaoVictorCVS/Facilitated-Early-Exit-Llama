@@ -37,10 +37,10 @@ out_dir = "../datasets/"
 # EVAL="grid_search"
 # EVAL="perplexities"
 # EVAL="judge"
-# EVAL="generation_judged"
+EVAL="generation_judged"
 # EVAL="timing_analysis"
 # EVAL = "Estimated_Computation"
-EVAL ="MACs/FLOPs"
+# EVAL ="MACs/FLOPs"
 
 
 CREATE_DATASET = False
