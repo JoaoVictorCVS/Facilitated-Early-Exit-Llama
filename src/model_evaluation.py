@@ -823,6 +823,7 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
 
     model_for_profile = copy.deepcopy(model)
     model_for_profile.eval()
+    clean_thop_buffers(model_for_profile)
 
     dummy_input_ids = torch.randint(
         low=0,
