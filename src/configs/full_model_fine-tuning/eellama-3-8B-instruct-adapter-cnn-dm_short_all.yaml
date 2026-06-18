@@ -1,0 +1,25 @@
+# Default config for fine-tuning.py
+dataset:
+  eval_path: ../datasets/cnn-dm_validation_short-shuffled32
+  select_range: null
+  train_path: ../datasets/cnn-dm_short
+lora_config_args:
+  bias: none
+  lora_alpha: 16
+  lora_dropout: 0.1
+  r: 8
+  target_modules:
+  - q_proj
+  - v_proj
+  - down_proj
+  task_type: CAUSAL_LM
+model:
+  copy_chat_template_model_id: null
+  exit_layers:
+  - 7
+  - 15
+  - 23
+  - 31
+  model_id: meta-llama/Meta-Llama-3-8B-Instruct
+output_path: ../models/test
+sft_config_args: {}

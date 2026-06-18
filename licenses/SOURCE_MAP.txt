@@ -1,0 +1,10 @@
+Copied/adapted components:
+
+src/model_evaluation.py
+    - The G-Eval prompt template is adapted from Yang Liu (MIT License) and 
+      Confident AI Inc.
+    - License: licenses/G-Eval_LICENSE.txt and licenses/DeepEval_LICENSE.txt
+
+src/transformers_override/*
+    - Adapted from https://github.com/huggingface/transformers/tree/v4.57-release/src/transformers
+    - License: licenses/transformers_LICENSE.txt

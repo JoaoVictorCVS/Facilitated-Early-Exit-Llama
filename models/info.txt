@@ -1,0 +1,3 @@
+Get example model files from 
+https://github.com/Hand5n/facilitated-early-exit-llama/releases/tag/v1.0 
+and place the contents in this directory.

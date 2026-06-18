@@ -1,0 +1,4 @@
+local
+models/*
+datasets/
+!models/info.txt
