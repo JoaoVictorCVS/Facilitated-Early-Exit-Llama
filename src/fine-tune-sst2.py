@@ -15,11 +15,22 @@ Run from the src/ directory:
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+import importlib.util
 import logging
+from pathlib import Path
 
 from datasets import load_dataset
 
-from fine_tuning import ModelPEFTTuner, ModelPEFTTunerConfig
+# fine-tuning.py has a hyphen in its name so it cannot be imported with a
+# regular import statement; load it by file path instead.
+_spec = importlib.util.spec_from_file_location(
+    "fine_tuning", Path(__file__).parent / "fine-tuning.py"
+)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+ModelPEFTTuner = _mod.ModelPEFTTuner
+ModelPEFTTunerConfig = _mod.ModelPEFTTunerConfig
+
 import utils.logging_utils  # noqa: F401 – sets up root logging
 
 logger = logging.getLogger(__name__)
