@@ -805,11 +805,11 @@ def clean_thop_buffers(model):
     """
 
     for module in model.modules():
-        if hasattr(module, "total_ops"):
-            del module._buffers["total_ops"]
-
-        if hasattr(module, "total_params"):
-            del module._buffers["total_params"]
+        for attr in ("total_ops", "total_params"):
+            if attr in module._buffers:
+                del module._buffers[attr]
+            elif hasattr(module, attr):
+                delattr(module, attr)
 
 
 
