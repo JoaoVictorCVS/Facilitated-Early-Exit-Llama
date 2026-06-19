@@ -26,7 +26,10 @@ _sentinel_unset = object()
 #model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
 #adapter_path = "facilitated-early-exit-llama/models/llama-3-eellama-3-8B-instruct/llama-3-eellama-3-8B-instruct-adapter-cnn-dm/checkpoint-4830"
 model_id = "facebook/layerskip-llama3.2-1B"
-adapter_path = "/home/joaosa/facilitated-early-exit-llama/models/llama-3-eellama-3p2-1B-layerskip/llama-3-eellama-3p2-1B-layerskip-adapter-cnn-dm/checkpoint-4760"
+# CNN/DM fine-tuned adapter:
+# adapter_path = "/home/joaosa/facilitated-early-exit-llama/models/llama-3-eellama-3p2-1B-layerskip/llama-3-eellama-3p2-1B-layerskip-adapter-cnn-dm/checkpoint-4760"
+# SST-2 fine-tuned adapter:
+adapter_path = "../models/llama-3-eellama-3p2-1B-layerskip/llama-3-eellama-3p2-1B-layerskip-adapter-sst2-final"
 #adapter_path = None
 is_chat_model = True
 untied_heads = False
@@ -259,53 +262,31 @@ def generate(model, tokenizer, is_chat_model, user_input, system_prompt=None, ma
 
     return response, output_string, stats
 
+SST2_SYSTEM_PROMPT = (
+    "Classify the sentiment of the following sentence as 'positive' or 'negative'."
+)
+
 def example_run():
     instantiate_model()
 
-    #prompt = "We had no idea how much we would really, really, really, really like Tom Hanks lip-syncing to a Carly Rae Jepsen song, but we really do. Hanks shows up in the new video for \"I Really Like You,\" \"singing\" Jepsen's part throughout. The Oscar-winning actor is apparently playing himself, signing autographs for fans, and generally being a very cheery movie star, before he and Jepsen take part in a flash mob. So what exactly is Tom Hanks doing in this video in the first place? Turns out he is good friends with Scooter Braun, manager for Jepsen (and Justin Bieber, who also appears in the video). He even sang and danced at Braun's wedding. ABC reported that Hanks suggested himself to play the role, after Jepsen said it would be amusing for a man to lip-sync her song. The result, as you can see, is kind of magical."
-    modify_inputs = True
+    # SST-2 example sentences (label: negative, positive, negative)
+    sentences = [
+        "hide new secretions from the parental units",
+        "it 's a charming and often affecting journey .",
+        "a disappointingly superficial exercise .",
+    ]
 
-    # Other articles
-    
-   # prompt = "It's usually parents pushing children to do their homework. But one pet rabbit from New Hampshire appears to be the one cracking the whip in his house. Victor Poulin filmed Fuzzy the bunny keeping his daughter, Chyanne, in check. Each time the schoolgirl puts her pencil down, Fuzzy swiftly picks it up in his teeth and encourages her to pick it up again. 'Tell her to do her homework Fuzzy,' Poulin instructs the critter from behind the camera. 'Yeah, you tell her... it's not time for a break' he continues. Chyanne can't help but giggle as Fuzzy keeps presenting her with a pencil. She then rolls the writing instrument back to him before he passes it back. Dozens of viewers have applauded the rabbit's tutoring antics with some deeming him 'cute'. Tutoring session: Victor Poulin filmed Fuzzy the bunny keeping his daughter, Chyanne, in check . Source of amusement: Each time the young student puts her pencil down, Fuzzy swiftly picks it up in his teeth and encourages her to pick it up again ."
-  
-    prompt = "Angel di Maria insists Manchester United will fight till the very end to ensure they qualify for the Champions league as the Red Devils prepare for a make or break four game run-in. Di Maria sat out the win over Tottenham after being sent off for tugging referee Michael Oliver's shirt in United's FA Cup defeat to Arsenal. The £59.7million midfielder knows the next four fixtures - against Liverpool, Aston Villa, Manchester City and Chelsea will ultimately make or break United's season. Angel di Maria pleads his innocence after being booked by referee Michael Oliver in the defeat to Arsenal . Di Maria  walks off the pitch after receiving the red card during the FA Cup quarter-final with Arsenal . 'We are all aware that a number of big games are just around the corner, and the season will be decided by these fixtures,' Di Maria told United Review. 'We know all about these upcoming games and we have been thinking and talking about them for quite some time now. We've known that everything would be at stake over this final period of the season.' Di Maria celebrates after scoring during United's FA Cup third round match against Yeovil Town . He added: 'Everyone at the club is 100 per cent confident, we know we want to get back into the Champions League and that we want to be fighting it out. 'We'll battle hard right to the end of the season. From what I know of the club, United always fight right to the end and that's what we're going to do.' Di Maria celebrates at Old Trafford after scoring against Everton in the Premier League win . Di Maria slides on his knees as he celebrates Manchester United's thumping victory against QPR ."
-
-
-    # Example calls:
-
-    # generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer"], tag_exits=True, use_cache=False, do_sample=False)
-    # generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer", "exit_layer_attributions"], tag_exits=True, use_cache=False, do_sample=False)
-
-    # instantiate_model(attention_weight_tuning={"tune_tokens": {128006: {"tuning": 2}, 128007: {"tuning": 4}}})
-    # generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer", "exit_layer_attributions"], tag_exits=True, use_cache=False, do_sample=False, print_output=True)
-
-    # # Test tuned embedding and lm_head
-    # generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer"], tag_exits=True, use_cache=False, do_sample=False)
-    # # Load all the parameters updated in state_dict
-    # state_dict_path = "../models/eellama-3-8B-instruct-lora-tuned-embedding/tuned_embedding_and_lm_head.pth"
-    # state_dict = torch.load(state_dict_path)
-    # assert type(model.base_model.model.model).__name__=="EELlamaModel"  # The structure might be different if not using a peft model or so.
-    # missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-    # assert len(unexpected_keys) == 0, "The following parameters could not be loaded: " + str(unexpected_keys)
-    # generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer"], tag_exits=True, use_cache=False, do_sample=False)
-
-
-    if modify_inputs:
-        # Load an early-exit-tuned layer 0
-        state_dict_path = "/home/joaosa/facilitated-early-exit-llama/models/llama-3-eellama-3p2-1B-layerskip/CEDA-l-02_state_dict_update_layer0.pth"
-        state_dict = torch.load(state_dict_path)              
-        assert type(model.base_model.model.model).__name__=="EELlamaModel"  # The structure might be different if not using a peft model or so.
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        assert len(unexpected_keys) == 0, "The following parameters could not be loaded: " + str(unexpected_keys)
-
-    generate(model, tokenizer, is_chat_model, prompt, eval_stats=["exit_layer"], tag_exits=True, use_cache=False, do_sample=False)
-     #   if hasattr(model, "base_model"):
-     #    ee_model = model.base_model.model
-     #   else:
-     #    ee_model = model.model
-
-      #  assert type(model.base_model.model.model).__name__=="EELlamaModel" # The structure might be different if not using a peft model or so.
+    for sentence in sentences:
+        generate(
+            model, tokenizer, is_chat_model,
+            f"Sentence: {sentence}",
+            system_prompt=SST2_SYSTEM_PROMPT,
+            max_new_tokens=8,
+            eval_stats=["exit_layer"],
+            tag_exits=True,
+            use_cache=False,
+            do_sample=False,
+        )
     
 
 

@@ -536,8 +536,7 @@ JSON:
         verbose_mode=True,
         evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
         evaluation_template=CustomGEvalTemplate,
-        # model="gemini-2.0-flash-001"
-        model="gemini-2.5-flash-lite"
+        model="gemini-2.0-flash-001"
     )
 
     all_scores = {
@@ -558,7 +557,18 @@ JSON:
                 LLMTestCase(input=golden.input, actual_output=golden.actual_output, expected_output=golden.expected_output)
             )
 
-        eval_result = evaluate(test_cases=dataset.test_cases, metrics=[coherence_metric, consistency_metric, fluency_metric, relevance_metric])
+        # Retry with backoff on 429 / quota errors
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                eval_result = evaluate(test_cases=dataset.test_cases, metrics=[coherence_metric, consistency_metric, fluency_metric, relevance_metric])
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                wait = 2 ** (attempt + 1) * 10  # 20s, 40s, 80s, 160s, 320s
+                print(f"LLM judge call failed ({e}), retrying in {wait}s...")
+                time.sleep(wait)
         # Returns list of TestResult, each containing a list metrics_data of MetricData, containing score and reason, as well as error.
 
         assert eval_result.test_results[0].metrics_data[0].name == "Coherence [GEval]" and eval_result.test_results[0].metrics_data[1].name == "Consistency [GEval]" and eval_result.test_results[0].metrics_data[2].name == "Fluency [GEval]" and eval_result.test_results[0].metrics_data[3].name == "Relevance [GEval]"
@@ -795,11 +805,11 @@ def clean_thop_buffers(model):
     """
 
     for module in model.modules():
-        if hasattr(module, "total_ops"):
-            del module._buffers["total_ops"]
-
-        if hasattr(module, "total_params"):
-            del module._buffers["total_params"]
+        for attr in ("total_ops", "total_params"):
+            if attr in module._buffers:
+                del module._buffers[attr]
+            elif hasattr(module, attr):
+                delattr(module, attr)
 
 
 
@@ -810,6 +820,7 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
 
     import copy
     from thop import profile
+    import torch.nn as nn
 
     model_for_profile = copy.deepcopy(model)
     model_for_profile.eval()
@@ -823,12 +834,30 @@ def estimate_model_macs_per_token(model, tokenizer, seq_len=128):
 
     dummy_attention_mask = torch.ones_like(dummy_input_ids)
 
-    with torch.no_grad():
-        macs, params = profile(
-            model_for_profile,
-            inputs=(dummy_input_ids,),
-            verbose=False
-        )
+    # Monkey-patch register_buffer to overwrite stale thop buffers instead of
+    # raising KeyError. thop calls register_buffer("total_ops", ...) on every
+    # module; if the model already carries those buffers from a prior run the
+    # normal path errors. We restore the original after profiling.
+    _orig_register_buffer = nn.Module.register_buffer
+
+    def _register_buffer_overwrite(self, name, tensor, persistent=True):
+        if hasattr(self, name):
+            # Bypass the conflict check entirely: write directly to _buffers
+            # regardless of where the stale attribute lives.
+            self._buffers[name] = tensor
+            return
+        _orig_register_buffer(self, name, tensor, persistent)
+
+    nn.Module.register_buffer = _register_buffer_overwrite
+    try:
+        with torch.no_grad():
+            macs, params = profile(
+                model_for_profile,
+                inputs=(dummy_input_ids,),
+                verbose=False
+            )
+    finally:
+        nn.Module.register_buffer = _orig_register_buffer
 
     del model_for_profile
     torch.cuda.empty_cache()
@@ -1040,17 +1069,20 @@ if __name__=="__main__":
             output_string += indention + f"Evaluation duration: { evaluation_duration//60:.0f}:{evaluation_duration%60:.0f} minutes\n"
             output_string += indention + f"Mean output length: {round(torch.tensor(output_lengths, dtype=torch.float).mean().item(), 4)}, total tokens generated: {sum(output_lengths)}\n"
 
-            output_string += indention + f"Std of overall summary score: {round(torch.tensor(summary_scores['overall']).std().item(), 4)}\n"
+            if summary_scores is None:
+                output_string += indention + "Summary scores: unavailable (LLM judge failed)\n\n"
+            else:
+                output_string += indention + f"Std of overall summary score: {round(torch.tensor(summary_scores['overall']).std().item(), 4)}\n"
 
-            # reference_sum_scores = None if is_reference else {'coherence': 0.45555558800697327, 'consistency': 0.7555555701255798, 'fluency': 1.0, 'relevance': 0.4500000476837158, 'overall': 0.6652777194976807}  # fine-tuned model
-            # reference_sum_scores = None if is_reference else {'coherence': 0.5000, 'consistency': 0.7556, 'fluency': 1.0, 'relevance': 0.4944, 'overall': 0.6875}  # fine-tuned model with fine-tuned embedding and lm_head
-            # reference_sum_scores = None if is_reference else {'coherence': 0.5267, 'consistency': 0.7267, 'fluency': 1.0, 'relevance': 0.4956, 'overall': 0.6872}  # fine-tuned model with fine-tuned embedding and lm_head on cnn-dm_validation_short-shuffled52-102.json
-            reference_sum_scores = None if is_reference else {'coherence': 0.47333335876464844, 'consistency': 0.7244445085525513, 'fluency': 0.9900000095367432, 'relevance': 0.47111114859580994, 'overall': 0.664722204208374}  # eellama-3p2-1B-layerskip with exp-decaying thresolds on cnn-dm_validation_short-shuffled52-102.json
-            mean_summary_scores = {key: torch.tensor(val).mean().item() for key, val in summary_scores.items()}
-            sum_scores_indention = "\t\t\t\t\t\t"
-            output_string += indention + sum_scores_indention + "Summary scores:\n"
-            output_string += print_histogram_string(mean_summary_scores, ref_hist=reference_sum_scores, indention=indention+sum_scores_indention)
-            output_string += "\n\n"
+                # reference_sum_scores = None if is_reference else {'coherence': 0.45555558800697327, 'consistency': 0.7555555701255798, 'fluency': 1.0, 'relevance': 0.4500000476837158, 'overall': 0.6652777194976807}  # fine-tuned model
+                # reference_sum_scores = None if is_reference else {'coherence': 0.5000, 'consistency': 0.7556, 'fluency': 1.0, 'relevance': 0.4944, 'overall': 0.6875}  # fine-tuned model with fine-tuned embedding and lm_head
+                # reference_sum_scores = None if is_reference else {'coherence': 0.5267, 'consistency': 0.7267, 'fluency': 1.0, 'relevance': 0.4956, 'overall': 0.6872}  # fine-tuned model with fine-tuned embedding and lm_head on cnn-dm_validation_short-shuffled52-102.json
+                reference_sum_scores = None if is_reference else {'coherence': 0.47333335876464844, 'consistency': 0.7244445085525513, 'fluency': 0.9900000095367432, 'relevance': 0.47111114859580994, 'overall': 0.664722204208374}  # eellama-3p2-1B-layerskip with exp-decaying thresolds on cnn-dm_validation_short-shuffled52-102.json
+                mean_summary_scores = {key: torch.tensor(val).mean().item() for key, val in summary_scores.items()}
+                sum_scores_indention = "\t\t\t\t\t\t"
+                output_string += indention + sum_scores_indention + "Summary scores:\n"
+                output_string += print_histogram_string(mean_summary_scores, ref_hist=reference_sum_scores, indention=indention+sum_scores_indention)
+                output_string += "\n\n"
             output_string += indention + f"Mean exit points per instance: {mean_exit_points}\n"
 
             if is_reference:
