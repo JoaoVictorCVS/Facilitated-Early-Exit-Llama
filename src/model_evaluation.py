@@ -39,7 +39,6 @@ out_dir = "../datasets/"
 # EVAL="judge"
 # EVAL="generation_judged"
 # EVAL="timing_analysis"
-# EVAL = "Estimated_Computation"
 EVAL ="MACs/FLOPs"
 
 
@@ -1236,56 +1235,7 @@ if __name__=="__main__":
             print(f"FLOP reduction: {compute_stats['flop_reduction']:,.2f}")
 
 
-    elif EVAL=="Estimated_Computation":
-
-        inference.instantiate_model()
-        print("Device: ", inference.model.device)
-
-        files = [
-            data_file
-        ]
-
-        for data_file in files:
-            if data_file.endswith(".json"):
-                dataset = load_dataset(
-                    "json",
-                    data_dir=data_dir,
-                    data_files={"validation": data_file},
-                    split="validation"
-                )
-            else:
-                dataset = load_from_disk(f"{data_dir}/{data_file}")
-
-            dataset = dataset.rename_column("article", "prompt")
-            dataset = dataset.rename_column("highlights", "completion")
-
-            print(f"\nDataset: {data_file}")
-
-            _, all_exit_points, mean_exit_points, output_lengths = \
-                eval_generation_with_llm_as_a_judge(
-                    dataset,
-                    inference.model,
-                    inference.tokenizer,
-                    reference_dataset=None,
-                    system_prompt=None,
-                    out_dataset_file=None,
-                    intermittent=False
-                )
-
-            compute_stats = compute_early_exit_compute_stats(
-                exit_points=all_exit_points,
-                full_model_layers=max(inference.exit_layers),
-                macs_per_layer=None
-            )
-
-            print("\nCompute estimate:")
-            print(f"Total generated tokens: {compute_stats['total_tokens']}")
-            print(f"Full layer executions: {compute_stats['full_layer_executions']:.2f}")
-            print(f"Early-exit layer executions: {compute_stats['early_exit_layer_executions']:.2f}")
-            print(f"Compute fraction: {compute_stats['compute_fraction']:.4f}")
-            print(f"Estimated compute reduction: {compute_stats['compute_reduction_percent']:.2f}%")
-
-
+    
     elif EVAL=="timing_analysis":
         start_time = time.time()
         inference.instantiate_model()
