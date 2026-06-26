@@ -138,13 +138,13 @@ class EeLlamaConfig(LlamaConfig):
             decides to exit in none of the given exit_layers, it will compute outputs at the model's final layer.
             Should be coherent to the configuration used for training the model.
         ee_softmax_threshold (`float` or `list` of `float`, *optional*, defaults to 0.7):
-            The model will exit if the softmax confidence at an exit layer is higher than this threshold. 
+            The model will exit if the softmax confidence at an exit layer is higher than this threshold.
             If given as list, should contain one threshold for each layer in `exit_layers` in increasing layer order.
         ee_entropy_threshold (`float` or `list` of `float`, *optional*, defaults to None):
-            The model will exit if the entropy of predictions at an exit layer is lower than this threshold. 
+            The model will exit if the entropy of predictions at an exit layer is lower than this threshold.
             If given as list, should contain one threshold for each layer in `exit_layers` in increasing layer order.
         output_full_model (`bool`, *optional*, defaults to False):
-            If True, always compute all layers until the last, use the last layer's output and return all layers logits. 
+            If True, always compute all layers until the last, use the last layer's output and return all layers logits.
             Useful for performing model evaluation during training.
         untied_heads (`bool`, *optional* , default to `False`):
             Whether each exit layer should have a separate lm head instead of sharing weights.
@@ -153,20 +153,47 @@ class EeLlamaConfig(LlamaConfig):
             Example structure:
             ```
             {
-                "tune_tokens": 
-                    [{"token": 128006, "tune_offset": 1, "tuning": 1.2, "target_layers": LayerSubsets.EXIT_LAYERS}, ...], 
-                "tune_pos": 
-                    [{"pos_id": 42, "tuning": 1.2, "target_layers": LayerSubsets.EXIT_LAYERS}, ...], 
-                "pos_tag_ids": 
+                "tune_tokens":
+                    [{"token": 128006, "tune_offset": 1, "tuning": 1.2, "target_layers": LayerSubsets.EXIT_LAYERS}, ...],
+                "tune_pos":
+                    [{"pos_id": 42, "tuning": 1.2, "target_layers": LayerSubsets.EXIT_LAYERS}, ...],
+                "pos_tag_ids":
                     [...]
             }
             ```
             where `tune_tokens` is a list of dictionaries specifying the tokens to tune by their IDs in the vocabulary,
-            `tune_pos` is a list of dictionaries specifying the tokens to tune by their part-of-speech tag IDs given 
+            `tune_pos` is a list of dictionaries specifying the tokens to tune by their part-of-speech tag IDs given
             a list of the pos tag ids for each prompt token in `pos_tag_ids`.
         enforce_exit_decision (`bool`, *optional*, defaults to `False`):
-            If True, the model will compute the exit decision even during training and when `output_full_model` is True. 
+            If True, the model will compute the exit decision even during training and when `output_full_model` is True.
             (For example to store the exit points in the stats)
+        skipdecode_enabled (`bool`, *optional*, defaults to `False`):
+            If True, use the SkipDecode inference strategy instead of confidence-based early exit.
+            SkipDecode assigns a monotonically-decreasing number of active layers to each generated token
+            based on its position in the sequence, running warmup layers at the bottom and the remaining
+            budget in the top layers (skipping the middle). This is compatible with batching and KV caching
+            because all tokens in a batch at the same sequence position share the same exit schedule, and
+            monotonically-decreasing budgets ensure previous tokens always have KV cache entries for every
+            layer the current token needs. See: Corro et al. 2023, "SkipDecode: Autoregressive Skip Decoding
+            with Batching and Caching for Efficient LLM Inference".
+        skipdecode_min_exit_layer (`int`, *optional*, defaults to `0`):
+            The minimum total number of layers to compute for any generated token (applied to the last token
+            of the sequence). Must satisfy: skipdecode_num_warmup_layers <= skipdecode_min_exit_layer.
+        skipdecode_max_exit_layer (`int`, *optional*, defaults to `None`):
+            The maximum total number of layers to compute for any generated token (applied to the first
+            generated token after the prompt). Defaults to `num_hidden_layers` (full network).
+        skipdecode_num_warmup_layers (`int`, *optional*, defaults to `1`):
+            Number of bottom layers always computed as warmup before skipping to the top layers.
+            Warmup layers bridge the embedding representation to the top layer hidden states.
+            The paper consistently found 1 warmup layer to work best.
+        skipdecode_max_sequence_length (`int`, *optional*, defaults to `512`):
+            Expected maximum total sequence length (prompt + generation). Used as the denominator in the
+            linear decay schedule: budget decays from skipdecode_max_exit_layer at the first generated
+            token to skipdecode_min_exit_layer at position skipdecode_max_sequence_length - 1.
+        skipdecode_prompt_size (`int`, *optional*, defaults to `0`):
+            Expected prompt length. Tokens at positions < skipdecode_prompt_size are always processed with
+            the full network. The decay schedule starts from this position. Set to the median training
+            prompt length (or the actual prompt length at inference) for best results.
 
     ```python
     >>> from transformers import EeLlamaModel, EeLlamaConfig
@@ -215,6 +242,14 @@ class EeLlamaConfig(LlamaConfig):
         attention_weight_tuning=None,
         enforce_exit_decision=False,
 
+        # SkipDecode parameters
+        skipdecode_enabled=False,
+        skipdecode_min_exit_layer=0,
+        skipdecode_max_exit_layer=None,
+        skipdecode_num_warmup_layers=1,
+        skipdecode_max_sequence_length=512,
+        skipdecode_prompt_size=0,
+
         **kwargs,
     ):
         print("Instantiating an EeLlamaConfig.")
@@ -227,6 +262,13 @@ class EeLlamaConfig(LlamaConfig):
         self.untied_heads = untied_heads
         self.attention_weight_tuning = attention_weight_tuning
         self.enforce_exit_decision = enforce_exit_decision
+
+        self.skipdecode_enabled = skipdecode_enabled
+        self.skipdecode_min_exit_layer = skipdecode_min_exit_layer
+        self.skipdecode_max_exit_layer = skipdecode_max_exit_layer
+        self.skipdecode_num_warmup_layers = skipdecode_num_warmup_layers
+        self.skipdecode_max_sequence_length = skipdecode_max_sequence_length
+        self.skipdecode_prompt_size = skipdecode_prompt_size
 
 
 __all__ = ["EeLlamaConfig"]

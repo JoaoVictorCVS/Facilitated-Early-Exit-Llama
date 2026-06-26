@@ -137,6 +137,61 @@ class EELlamaModel(LlamaModel):
     def __init__(self, config: EeLlamaConfig):
         super().__init__(config)
 
+    def _compute_skipdecode_layers(self, cache_position: torch.LongTensor) -> Optional[set]:
+        """
+        Compute the set of layer indices to execute under the SkipDecode policy.
+
+        SkipDecode assigns each generated token a computational budget (total number
+        of layers) that decays linearly from skipdecode_max_exit_layer (for the first
+        generated token) to skipdecode_min_exit_layer (for the last token of the
+        sequence). The budget is split into:
+          - warmup_layers bottom layers (always run)
+          - (budget - warmup_layers) top layers (run from the top of the network)
+          - middle layers are skipped entirely
+
+        This guarantees that: (a) all tokens in a batch at the same position use the
+        same layers (enabling batching), and (b) later tokens use a subset of the top
+        layers used by earlier tokens, so their KV cache entries always exist
+        (no recomputation needed).
+
+        Returns None when SkipDecode is not active (training or output_full_model).
+        Returns a set of layer indices when SkipDecode is active.
+        """
+        if not self.config.skipdecode_enabled:
+            return None
+        if self.training or self.config.output_full_model:
+            return None
+
+        num_layers = self.config.num_hidden_layers
+
+        # Prompt processing (multi-token forward): use the full network.
+        # During generation with KV cache, each call processes exactly one token.
+        if cache_position.shape[0] > 1:
+            return set(range(num_layers))
+
+        pos = int(cache_position[0].item())
+        prompt_size = self.config.skipdecode_prompt_size
+        seq_len = self.config.skipdecode_max_sequence_length
+        max_exit = self.config.skipdecode_max_exit_layer if self.config.skipdecode_max_exit_layer is not None else num_layers
+        min_exit = self.config.skipdecode_min_exit_layer
+        warmup = self.config.skipdecode_num_warmup_layers
+
+        # Tokens inside the prompt range always use the full network.
+        if pos < prompt_size:
+            return set(range(num_layers))
+
+        # Linear decay: t=0 at the first generated position → budget=max_exit
+        #               t=1 at seq_len-1                     → budget=min_exit
+        denom = max(seq_len - prompt_size - 1, 1)
+        t = min(1.0, max(0.0, (pos - prompt_size) / denom))
+        budget = int(round((1 - t) * max_exit + t * min_exit))
+        budget = max(min_exit, min(max_exit, budget))
+
+        # Bottom warmup layers + top (budget-warmup) layers; skip the rest.
+        top_layers_count = budget - warmup
+        top_start = max(warmup, num_layers - top_layers_count)
+        return set(range(warmup)) | set(range(top_start, num_layers))
+
     @check_model_inputs
     @auto_docstring
     def forward(
@@ -229,7 +284,10 @@ class EELlamaModel(LlamaModel):
 
 
         if not (self.training or self.config.output_full_model) or self.config.enforce_exit_decision:
-            assert input_ids.shape[0]==1, "EEeLlama with early exit enabled is only thought for a batch size of 1."     # TODO: It would be possible to process as batch and decide on exiting early for each instance separately. The instance would need to be deleted from the batch in case of early exiting to continue inference with the remaining instances, but all outputs at exiting would need to be saved for finally returning the result of the whole batch.
+            if not self.config.skipdecode_enabled:
+                # SkipDecode uses a unified per-position exit point for all batch members,
+                # so it naturally supports batching without this restriction.
+                assert input_ids.shape[0]==1, "EEeLlama with early exit enabled is only thought for a batch size of 1."     # TODO: It would be possible to process as batch and decide on exiting early for each instance separately. The instance would need to be deleted from the batch in case of early exiting to continue inference with the remaining instances, but all outputs at exiting would need to be saved for finally returning the result of the whole batch.
         assert input_ids != None, "EeLlamaModel requires input_ids."
 
         assert (not ("exit_layer" in eval_stats or "exit_layer_attributions" in eval_stats)) or (stats is not None), "A dict must be passed as parameter `stats` if a statistical metric to collect is given in `eval_stats`."
@@ -250,6 +308,10 @@ class EELlamaModel(LlamaModel):
             cache_position: torch.Tensor = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
+
+        # Compute SkipDecode layer schedule (None if SkipDecode is inactive).
+        # Must be computed after cache_position is finalized so position is known.
+        skipdecode_layers = self._compute_skipdecode_layers(cache_position)
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
@@ -359,6 +421,45 @@ class EELlamaModel(LlamaModel):
             AttentionMaskInterface.register("eager_with_stats", attn_mask)
             self.set_attn_implementation("eager_with_stats")
 
+
+        ##### SkipDecode forward path #####
+        # When skipdecode_layers is not None, use the position-based layer schedule
+        # instead of the confidence-based early exit below. Only a subset of layers
+        # is executed: warmup layers at the bottom and top layers, skipping the middle.
+        # Middle layers are never called, so their KV cache entries are never written —
+        # which is safe because monotonically-decreasing budgets guarantee that later
+        # tokens need fewer top-layer entries, all of which were already written by
+        # earlier tokens with larger budgets.
+        if skipdecode_layers is not None:
+            for l, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+                if l not in skipdecode_layers:
+                    continue  # skip middle layers; do NOT update KV cache for them
+                hidden_states = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    position_ids=position_ids,
+                    past_key_values=past_key_values,
+                    cache_position=cache_position,
+                    position_embeddings=position_embeddings,
+                    **kwargs,
+                )
+
+            hidden_states = self.norm(hidden_states)
+            slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+            logits = lm_head[-1](hidden_states[:, slice_indices, :])
+
+            if "exit_layer" in eval_stats:
+                # Report the number of layers actually executed as the "exit layer".
+                stats["exit_layer"].append(len(skipdecode_layers))
+
+            return BaseModelOutputWithPastAndLogits(
+                last_hidden_state=hidden_states,
+                past_key_values=past_key_values,
+                logits=logits,
+                all_layers_logits=all_layers_logits,
+                stats=stats,
+            )
+        ##### End SkipDecode forward path #####
 
         for l, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             hidden_states = decoder_layer(
