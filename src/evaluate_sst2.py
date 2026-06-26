@@ -107,10 +107,19 @@ class EvalConfig(GenericConfig):
 # ---------------------------------------------------------------------------
 
 def _load_tokenizer(model_id: str, adapter_path: Optional[str] = None) -> AutoTokenizer:
-    tok = AutoTokenizer.from_pretrained(adapter_path if adapter_path else model_id)
+    source = adapter_path if adapter_path else model_id
+    if source and os.path.exists(source):
+        source = os.path.abspath(source)
+    tok = AutoTokenizer.from_pretrained(source)
     if tok.pad_token_id is None:
         tok.pad_token_id = tok.eos_token_id
     return tok
+
+
+def _resolve_path(path: Optional[str]) -> Optional[str]:
+    if path and os.path.exists(path):
+        return os.path.abspath(path)
+    return path
 
 
 def load_base_model(cfg: Dict[str, Any]):
@@ -120,9 +129,10 @@ def load_base_model(cfg: Dict[str, Any]):
         torch_dtype=torch.bfloat16,
         device_map=0,
     )
-    tokenizer = _load_tokenizer(cfg["model_id"], cfg.get("adapter_path"))
-    if cfg.get("adapter_path"):
-        model = PeftModel.from_pretrained(model, cfg["adapter_path"])
+    adapter_path = _resolve_path(cfg.get("adapter_path"))
+    tokenizer = _load_tokenizer(cfg["model_id"], adapter_path)
+    if adapter_path:
+        model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
     return model, tokenizer
 
@@ -145,9 +155,10 @@ def load_eellama_model(cfg: Dict[str, Any]):
         device_map=0,
         **kwargs,
     )
-    tokenizer = _load_tokenizer(cfg["model_id"], cfg.get("adapter_path"))
-    if cfg.get("adapter_path"):
-        model = PeftModel.from_pretrained(model, cfg["adapter_path"])
+    adapter_path = _resolve_path(cfg.get("adapter_path"))
+    tokenizer = _load_tokenizer(cfg["model_id"], adapter_path)
+    if adapter_path:
+        model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
     return model, tokenizer
 
@@ -168,9 +179,10 @@ def load_skipdecode_model(cfg: Dict[str, Any]):
         skipdecode_max_sequence_length=cfg.get("skipdecode_max_sequence_length", 128),
         skipdecode_prompt_size=cfg.get("skipdecode_prompt_size", 0),
     )
-    tokenizer = _load_tokenizer(cfg["model_id"], cfg.get("adapter_path"))
-    if cfg.get("adapter_path"):
-        model = PeftModel.from_pretrained(model, cfg["adapter_path"])
+    adapter_path = _resolve_path(cfg.get("adapter_path"))
+    tokenizer = _load_tokenizer(cfg["model_id"], adapter_path)
+    if adapter_path:
+        model = PeftModel.from_pretrained(model, adapter_path)
     model.eval()
     return model, tokenizer
 
