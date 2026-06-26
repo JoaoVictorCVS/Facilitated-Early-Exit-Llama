@@ -260,7 +260,6 @@ class SST2FineTuner:
         )
 
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-        tokenizer.eos_token_id = model.config.eos_token_id
 
         if model_cfg.get("copy_chat_template_model_id"):
             src_tok = AutoTokenizer.from_pretrained(model_cfg["copy_chat_template_model_id"])
