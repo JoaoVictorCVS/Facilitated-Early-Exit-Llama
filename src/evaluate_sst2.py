@@ -106,20 +106,26 @@ class EvalConfig(GenericConfig):
 # Model loaders
 # ---------------------------------------------------------------------------
 
+def _resolve_path(path: Optional[str]) -> Optional[str]:
+    """Return an absolute path for anything that looks like a local filesystem path.
+
+    Paths starting with '/', './', '../', or containing a path separator are
+    treated as local and resolved to absolute form so that HuggingFace Hub
+    does not mistake them for repo IDs.
+    """
+    if not path:
+        return path
+    if path.startswith(("/", "./", "../")) or os.sep in path:
+        return os.path.abspath(path)
+    return path
+
+
 def _load_tokenizer(model_id: str, adapter_path: Optional[str] = None) -> AutoTokenizer:
     source = adapter_path if adapter_path else model_id
-    if source and os.path.exists(source):
-        source = os.path.abspath(source)
     tok = AutoTokenizer.from_pretrained(source)
     if tok.pad_token_id is None:
         tok.pad_token_id = tok.eos_token_id
     return tok
-
-
-def _resolve_path(path: Optional[str]) -> Optional[str]:
-    if path and os.path.exists(path):
-        return os.path.abspath(path)
-    return path
 
 
 def load_base_model(cfg: Dict[str, Any]):
