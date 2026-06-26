@@ -1,0 +1,76 @@
+# Fine-tuning config for EELlamma (with optional SkipDecode) on SST-2 sentiment classification.
+#
+# Model: Llama-3.2-1B-Instruct (16 layers) — small enough for rapid experimentation on SST-2.
+# Task: binary sentiment classification framed as generation ("positive" / "negative").
+# Exit layers: every 4th layer so the model can exit early at 4 checkpoints.
+#
+# SkipDecode inference parameters are included for completeness. During training,
+# output_full_model=True is always used (all layers computed). At inference, set
+# skipdecode_enabled to true and adjust min/max exit layers for the desired speedup.
+# Because SST-2 generates only one token, SkipDecode's positional decay has minimal
+# effect here; it becomes more impactful when the model is applied to longer generation
+# tasks after fine-tuning.
+#
+# Usage:
+#   python fine_tune_sst2.py  (uses this file by default via __main__)
+#   OR
+#   python fine_tune_sst2.py --config configs/full_model_fine-tuning/eellama-skipdecode-sst2.yaml
+
+output_path: ../models/eellama-skipdecode-sst2
+
+model:
+  model_id: meta-llama/Llama-3.2-1B-Instruct
+  copy_chat_template_model_id: null
+  # Exit at layers 3, 7, 11 and the final layer 15 (0-indexed).
+  exit_layers:
+    - 3
+    - 7
+    - 11
+    - 15
+
+  # --- SkipDecode inference parameters ---
+  # Toggle skipdecode_enabled=true at inference time to activate SkipDecode.
+  # These values give approximately 2x speedup on a 16-layer model
+  # (avg active layers ≈ 8, which is 16/8 = 2x).
+  skipdecode_enabled: false
+  skipdecode_min_exit_layer: 5       # layers used for the last generated token
+  skipdecode_max_exit_layer: 11      # layers used for the first generated token
+  skipdecode_num_warmup_layers: 1    # bottom warmup layers (paper default)
+  skipdecode_max_sequence_length: 128  # prompt + 1 output token; well within 128
+  skipdecode_prompt_size: 40         # ~median SST-2 prompt length after chat template
+
+lora_config_args:
+  r: 8
+  lora_alpha: 16
+  bias: none
+  lora_dropout: 0.05
+  task_type: CAUSAL_LM
+  # Target the attention projection and the down-projection (MLP bottleneck).
+  target_modules:
+    - q_proj
+    - v_proj
+    - down_proj
+
+sft_config_args:
+  num_train_epochs: 3
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 2      # effective batch = 16
+  learning_rate: 2.0e-4
+  max_length: 128                     # SST-2 sentences are short; 128 is sufficient
+  packing: false
+  eval_steps: 200
+  logging_steps: 50
+  bf16: true                          # overridden at runtime if bf16 unsupported
+  save_total_limit: 2
+  metric_for_best_model: eval_loss
+  load_best_model_at_end: true
+
+dataset:
+  # SST-2 is loaded directly from the HuggingFace Hub (glue/sst2); no local path needed.
+  select_range: null    # e.g. [0, 500] to run a quick smoke-test on 500 samples
+  fraction_train: 1.0   # use the full official train split
+
+loss_config_params:
+  # Uniform weights give equal importance to each exit layer during training.
+  # Set to false to weight later (deeper) exit layers more heavily.
+  uniform_weights: true
