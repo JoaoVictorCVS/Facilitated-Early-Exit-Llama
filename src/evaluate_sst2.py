@@ -77,7 +77,7 @@ class EvalConfig(GenericConfig):
             # EELlamma with confidence-based early exit
             "eellama_model": {
                 "model_id": "meta-llama/Llama-3.2-1B",
-                "adapter_path":"./models/llama-3-eellama-3p2-1B-layerskip/layer0",
+                "adapter_path":"home/joaosa/facilitated-early-exit-llama/models/llama-3-eellama-3p2-1B-layerskip/llama-3-eellama-3p2-1B-layerkip-adapter-sst2-final",
                 "enabled": True,
                 "exit_layers": [3, 7, 11, 15],
                 "ee_softmax_threshold": 0.9,
@@ -88,7 +88,7 @@ class EvalConfig(GenericConfig):
             # SkipDecode EELlamma
             "skipdecode_model": {
                 "model_id": "meta-llama/Llama-3.2-1B-Instruct",
-                "adapter_path": "./models/eellama-skipdecode-sst2-final",
+                "adapter_path": "home/joaosa/facilitated-early-exit-llama/models/eellama-skipdecode-sst2-final",
                 "enabled": True,
                 "exit_layers": [3, 7, 11, 15],
                 "untied_heads": False,
