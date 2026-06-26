@@ -28,8 +28,22 @@ model:
     - 11
     - 15
 
-  # --- SkipDecode inference parameters ---
-  # Toggle skipdecode_enabled=true at inference time to activate SkipDecode.
+  # --- SkipDecode parameters ---
+  # Set skipdecode_enabled=true to fine-tune AND infer with SkipDecode active.
+  #
+  # Training behaviour when true:
+  #   output_full_model is set to false and the SkipDecode forward path fires.
+  #   All tokens in each batch share a single layer budget equal to the midpoint
+  #   of the decay schedule — (max_exit_layer + min_exit_layer) / 2 — because
+  #   teacher-forced SFT processes the full sequence in one shot and cannot apply
+  #   per-position budgets without sequential (autoregressive) iteration.
+  #   Loss is computed from the top-layer output only (no intermediate exit logits).
+  #
+  # Inference behaviour when true:
+  #   Prompt tokens use all layers; each generated token gets a budget that decays
+  #   linearly from skipdecode_max_exit_layer to skipdecode_min_exit_layer based on
+  #   its position, enabling batching and KV-cache reuse without recomputation.
+  #
   # These values give approximately 2x speedup on a 16-layer model
   # (avg active layers ≈ 8, which is 16/8 = 2x).
   skipdecode_enabled: false

@@ -234,6 +234,13 @@ class SST2FineTuner:
         """Load the pretrained EELlamma model and tokenizer."""
         model_cfg = self.config["model"]
         model_id = model_cfg["model_id"]
+        skipdecode_enabled = model_cfg.get("skipdecode_enabled", False)
+
+        # When SkipDecode is enabled, output_full_model must be False so that the
+        # SkipDecode path in EELlamaModel.forward() is reached during training.
+        # When it is disabled, output_full_model=True ensures all exit layers are
+        # computed and their logits accumulated for the multi-exit loss.
+        output_full_model = not skipdecode_enabled
 
         model = EeLlamaForCausalLM.from_pretrained(
             model_id,
@@ -242,9 +249,9 @@ class SST2FineTuner:
             # EELlamma early-exit parameters
             exit_layers=model_cfg["exit_layers"],
             untied_heads=False,
-            output_full_model=True,   # always compute all layers during training
-            # SkipDecode parameters — stored in config, activated at inference time
-            skipdecode_enabled=model_cfg.get("skipdecode_enabled", False),
+            output_full_model=output_full_model,
+            # SkipDecode parameters
+            skipdecode_enabled=skipdecode_enabled,
             skipdecode_min_exit_layer=model_cfg.get("skipdecode_min_exit_layer", 0),
             skipdecode_max_exit_layer=model_cfg.get("skipdecode_max_exit_layer", None),
             skipdecode_num_warmup_layers=model_cfg.get("skipdecode_num_warmup_layers", 1),
@@ -266,24 +273,43 @@ class SST2FineTuner:
 
     @staticmethod
     def _compute_loss(model, outputs, labels, num_items_in_batch=None, config_params=None):
-        """Weighted cross-entropy loss summed over all EELlamma exit layers.
+        """Cross-entropy loss, adapted for both SkipDecode and standard EELlamma training.
 
-        Each exit layer contributes one cross-entropy loss. By default losses are
-        weighted uniformly; set ``uniform_weights=False`` to weight deeper exit
-        layers more (weight proportional to layer index).
+        SkipDecode mode (skipdecode_enabled=True)
+        -----------------------------------------
+        The SkipDecode forward path skips intermediate layers entirely, so
+        ``all_layers_logits`` is empty. In this case a single cross-entropy loss is
+        computed from ``outputs.logits`` (the top-layer output). This directly trains
+        the model to produce correct predictions from the layer subset that SkipDecode
+        would use at inference time.
+
+        Standard EELlamma mode (skipdecode_enabled=False)
+        --------------------------------------------------
+        All exit-layer logits are available in ``all_layers_logits``. Each exit layer
+        contributes one cross-entropy loss and the results are combined with either
+        uniform weights or depth-proportional weights (controlled by config_params).
 
         Parameters
         ----------
         model : EeLlamaForCausalLM
         outputs : CausalLMOutputWithPastAndEeLogits
-            Must contain ``all_layers_logits`` of shape
-            (num_exit_layers, batch, seq_len, vocab_size).
         labels : torch.Tensor  shape (batch, seq_len)
         num_items_in_batch : int, optional
         config_params : dict, optional
+            Supports ``uniform_weights`` (bool, default True).
         """
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
+        # SkipDecode path: all_layers_logits is empty because the forward pass
+        # returns early before any intermediate exit-layer logits are collected.
+        if model.config.skipdecode_enabled:
+            return model.loss_function(
+                logits=outputs.logits,
+                labels=labels,
+                vocab_size=model.config.vocab_size,
+            )
+
+        # Standard multi-exit EELlamma path.
         exit_layers = model.config.exit_layers
         num_exit_layers = len(exit_layers)
         assert num_exit_layers == outputs.all_layers_logits.shape[0], (

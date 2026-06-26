@@ -154,15 +154,42 @@ class EELlamaModel(LlamaModel):
         layers used by earlier tokens, so their KV cache entries always exist
         (no recomputation needed).
 
-        Returns None when SkipDecode is not active (training or output_full_model).
+        Training mode
+        -------------
+        During teacher-forced SFT training, all tokens in a batch are processed in a
+        single forward pass, so position-specific budgets cannot be applied per-token.
+        Instead, a single budget is used for the entire sequence: the budget that
+        corresponds to the midpoint of the generation span (t=0.5), which equals
+        (max_exit_layer + min_exit_layer) / 2. This trains the model to produce good
+        top-layer representations under the average computational cost and acts as a
+        representative proxy for the full decay schedule.
+
+        Returns None when SkipDecode is disabled or output_full_model is True.
         Returns a set of layer indices when SkipDecode is active.
         """
         if not self.config.skipdecode_enabled:
             return None
-        if self.training or self.config.output_full_model:
+        if self.config.output_full_model:
             return None
 
         num_layers = self.config.num_hidden_layers
+        max_exit = self.config.skipdecode_max_exit_layer if self.config.skipdecode_max_exit_layer is not None else num_layers
+        min_exit = self.config.skipdecode_min_exit_layer
+        warmup = self.config.skipdecode_num_warmup_layers
+
+        def layers_for_budget(budget: int) -> set:
+            budget = max(min_exit, min(max_exit, budget))
+            top_start = max(warmup, num_layers - (budget - warmup))
+            return set(range(warmup)) | set(range(top_start, num_layers))
+
+        if self.training:
+            # Teacher-forced training: apply a single budget for the whole sequence.
+            # Use t=0.5 (midpoint of the generation span) as a representative budget
+            # so the model trains at the average computational cost of the schedule.
+            budget = int(round(0.5 * max_exit + 0.5 * min_exit))
+            return layers_for_budget(budget)
+
+        # ---- Inference path ------------------------------------------------
 
         # Prompt processing (multi-token forward): use the full network.
         # During generation with KV cache, each call processes exactly one token.
@@ -172,9 +199,6 @@ class EELlamaModel(LlamaModel):
         pos = int(cache_position[0].item())
         prompt_size = self.config.skipdecode_prompt_size
         seq_len = self.config.skipdecode_max_sequence_length
-        max_exit = self.config.skipdecode_max_exit_layer if self.config.skipdecode_max_exit_layer is not None else num_layers
-        min_exit = self.config.skipdecode_min_exit_layer
-        warmup = self.config.skipdecode_num_warmup_layers
 
         # Tokens inside the prompt range always use the full network.
         if pos < prompt_size:
@@ -185,12 +209,7 @@ class EELlamaModel(LlamaModel):
         denom = max(seq_len - prompt_size - 1, 1)
         t = min(1.0, max(0.0, (pos - prompt_size) / denom))
         budget = int(round((1 - t) * max_exit + t * min_exit))
-        budget = max(min_exit, min(max_exit, budget))
-
-        # Bottom warmup layers + top (budget-warmup) layers; skip the rest.
-        top_layers_count = budget - warmup
-        top_start = max(warmup, num_layers - top_layers_count)
-        return set(range(warmup)) | set(range(top_start, num_layers))
+        return layers_for_budget(budget)
 
     @check_model_inputs
     @auto_docstring
