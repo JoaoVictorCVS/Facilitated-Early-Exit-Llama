@@ -46,7 +46,7 @@ model:
   #
   # These values give approximately 2x speedup on a 16-layer model
   # (avg active layers ≈ 8, which is 16/8 = 2x).
-  skipdecode_enabled: false
+  skipdecode_enabled: true
   skipdecode_min_exit_layer: 5       # layers used for the last generated token
   skipdecode_max_exit_layer: 11      # layers used for the first generated token
   skipdecode_num_warmup_layers: 1    # bottom warmup layers (paper default)
